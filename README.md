@@ -117,6 +117,16 @@ Open the frontend URL in your browser:
 2. Paste or upload a job description to get a match score, gap breakdown, and suggested resume bullets.
 3. Track the job's status on the Kanban board (Saved → Applied → Interviewing → Rejected/Offer) via drag-and-drop.
 
+## Screenshots
+
+**Add Job / Analyze** — paste/upload a resume and job description to get a match analysis:
+
+![Add Job / Analyze view](docs/screenshots/match.png)
+
+**Board** — Kanban tracker for all saved jobs:
+
+![Kanban board view](docs/screenshots/tracker.png)
+
 ## Project structure
 
 ```
