@@ -2,7 +2,7 @@
 
 A personal, local-only tool that tracks job applications on a Kanban board and uses an LLM to score how well your resume matches a given job description — with a breakdown of matched/missing requirements and rewritten resume bullet suggestions.
 
-Single-user, no auth, no hosting — runs entirely on your own machine. See [PRD.md](PRD.md) for full product scope.
+Single-user, no auth, no hosting — runs entirely on your own machine. See [PRD.md](PRD.md) for full product scope, or [PROJECT_STORY.md](PROJECT_STORY.md) for a portfolio-style writeup of the key decisions, trade-offs, and roadmap.
 
 ## Architecture
 
