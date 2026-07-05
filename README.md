@@ -163,6 +163,25 @@ npm run test:ui       # interactive UI mode — step through each test with a li
 npx playwright test --headed --workers=1   # watch the tests run in a visible browser window, one at a time
 ```
 
+## LLM cost per job analysis
+
+Every job goes through 1–2 calls to `gpt-4o-mini` (OpenAI pricing: ~$0.15 / 1M input tokens, ~$0.60 / 1M output tokens):
+
+| Call | When it runs | Est. tokens (in / out) | Est. cost |
+|---|---|---|---|
+| `llm_match.analyze()` — resume vs. JD match | Every job save (paste, upload, or after reviewing a URL-fetched JD) | ~1,500–3,000 / ~400–800 | ~$0.0007–0.0012 |
+| `jd_url_extract.extract_job_fields()` — URL scrape → structured fields | Only when using "Fetch from URL" | ~4,000–5,500 / ~500–1,000 | ~$0.0013–0.0018 |
+
+**Paste/upload flow:** ≈ $0.001 per job. **Fetch-from-URL flow (fetch + save):** ≈ $0.002–0.003 per job (two calls). At 1,000 job analyses/month this is roughly $1–3 total — already cheap, but the URL-extraction call (which sends the entire scraped page as input) is the more expensive half, and a validation retry (malformed LLM JSON response) roughly doubles the cost of whichever call triggered it.
+
+### Ways to reduce token cost
+
+- **Parse structured JSON-LD before calling the LLM for URL scraping.** Most ATS platforms (Greenhouse, Lever, Workday, Cisco's careers site) embed a `schema.org/JobPosting` block in the page HTML with title/company/description already structured — extracting that directly in `jd_scraper.py` would skip the `jd_url_extract` LLM call entirely for many job boards, falling back to the LLM only when no structured data is found. Biggest lever of the group.
+- **Trim scraped page text before sending it to the LLM** instead of a flat character-count truncation — stripping nav/footer/cookie-banner boilerplate first would cut input tokens substantially without losing JD content.
+- **Tighten prompt instructions for output length** (e.g. "1–2 concise sentences" for `recommendation_reasoning`/`scoring_method_explanation` in `llm_match.py`) — output tokens cost 4x the input rate.
+- **Use OpenAI's strict JSON schema mode** (`response_format: {"type": "json_schema", "strict": true}`) instead of `json_object` to eliminate the validation-failure retry path almost entirely.
+- **Keep prompts structured to benefit from OpenAI's automatic prompt caching** — repeated prefixes ≥1024 tokens get a 50% discount, so keeping the system prompt + resume as a stable prefix (already the current order) means repeat analyses against the same resume are partially discounted for free.
+
 ## Screenshots
 
 **Add Job / Analyze** — paste/upload a resume and job description to get a match analysis:
