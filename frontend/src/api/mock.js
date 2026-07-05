@@ -111,6 +111,32 @@ export async function createJob(payload) {
   };
 }
 
+export async function fetchJobFromUrl(url) {
+  await delay(1200); // simulate page scrape + LLM extraction round-trip
+  if (!url || !url.trim()) throw { status: 400, detail: "Enter a URL first." };
+  if (url.includes("blocked")) {
+    throw {
+      status: 502,
+      detail: "The page took too long to load. Try pasting the description instead.",
+    };
+  }
+  if (url.includes("empty")) {
+    throw {
+      status: 422,
+      detail:
+        "Could not find a job description on that page. It may require login, be blocked " +
+        "to automated tools, or not be a job posting. Try pasting the description instead.",
+    };
+  }
+  return {
+    title: "Senior Backend Engineer",
+    company: "Acme Corp",
+    jd_text:
+      "We are looking for a Senior Backend Engineer with 5+ years of experience in Python, " +
+      "REST API design, Docker and PostgreSQL. AWS Solutions Architect certification preferred.",
+  };
+}
+
 export async function listJobs() {
   await delay();
   return jobs.map((j) => ({

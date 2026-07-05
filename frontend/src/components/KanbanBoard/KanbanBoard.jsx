@@ -95,6 +95,7 @@ export default function KanbanBoard() {
           return (
             <div
               key={status}
+              data-testid={`column-${status}`}
               onDragOver={(e) => {
                 e.preventDefault();
                 setDragOverCol(status);

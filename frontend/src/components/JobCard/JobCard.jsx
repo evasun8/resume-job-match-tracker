@@ -15,6 +15,7 @@ export default function JobCard({ job, onClick, onDragStart, isDragging }) {
 
   return (
     <Card
+      data-testid={`job-card-${job.id}`}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}

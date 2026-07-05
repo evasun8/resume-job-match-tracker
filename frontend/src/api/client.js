@@ -69,6 +69,17 @@ export function createJob(payload) {
   return request("/jobs", { method: "POST", body: form });
 }
 
+// POST /api/jobs/from-url — { url } -> { title, company, jd_text }.
+// Does NOT create a job; only returns fields to prefill the form.
+export function fetchJobFromUrl(url) {
+  if (USE_MOCK) return mock.fetchJobFromUrl(url);
+  return request("/jobs/from-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}
+
 // GET /api/jobs — array of job summaries (match_summary may be null).
 export function listJobs() {
   if (USE_MOCK) return mock.listJobs();

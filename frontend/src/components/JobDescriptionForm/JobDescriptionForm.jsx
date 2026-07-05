@@ -21,6 +21,26 @@ export default function JobDescriptionForm({ onResult }) {
   const [jdFile, setJdFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [jobUrl, setJobUrl] = useState("");
+  const [fetchingUrl, setFetchingUrl] = useState(false);
+  const [urlError, setUrlError] = useState(null);
+
+  async function handleFetchUrl() {
+    if (!jobUrl.trim()) return;
+    setUrlError(null);
+    setFetchingUrl(true);
+    try {
+      const result = await client.fetchJobFromUrl(jobUrl.trim());
+      setTitle(result.title || "");
+      setCompany(result.company || "");
+      setJdText(result.jd_text || "");
+      setMode("paste");
+    } catch (err) {
+      setUrlError(err);
+    } finally {
+      setFetchingUrl(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -31,6 +51,10 @@ export default function JobDescriptionForm({ onResult }) {
     }
     if (mode === "upload" && !jdFile) {
       setError({ detail: "Choose a job description file first." });
+      return;
+    }
+    if (mode === "url") {
+      setError({ detail: "Fetch the job details first, then review and save from the Paste JD tab." });
       return;
     }
     setSubmitting(true);
@@ -94,7 +118,44 @@ export default function JobDescriptionForm({ onResult }) {
             <TabsList>
               <TabsTrigger value="paste">Paste JD</TabsTrigger>
               <TabsTrigger value="upload">Upload JD file</TabsTrigger>
+              <TabsTrigger value="url">Fetch from URL</TabsTrigger>
             </TabsList>
+            <TabsContent value="url">
+              <div className="space-y-2">
+                <Label htmlFor="job-url">Job posting URL</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="job-url"
+                    type="url"
+                    placeholder="https://company.com/careers/12345"
+                    value={jobUrl}
+                    onChange={(e) => setJobUrl(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={fetchingUrl || !jobUrl.trim()}
+                    onClick={handleFetchUrl}
+                  >
+                    {fetchingUrl ? (
+                      <>
+                        <Spinner /> Fetching...
+                      </>
+                    ) : (
+                      "Fetch job details"
+                    )}
+                  </Button>
+                </div>
+                {urlError && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Could not fetch that job page</AlertTitle>
+                    <AlertDescription>
+                      {urlError.detail} You can paste the description manually instead.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            </TabsContent>
             <TabsContent value="paste">
               <div className="space-y-2">
                 <Label htmlFor="jd-text">Job description</Label>

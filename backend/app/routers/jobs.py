@@ -5,6 +5,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.config import MAX_UPLOAD_SIZE_BYTES
+from app.services.jd_scraper import ScrapeError, fetch_page_text
+from app.services.jd_url_extract import JdExtractionError, extract_job_fields
 from app.services.llm_match import MatchAnalysisError, analyze
 from app.services.text_extraction import TextExtractionError, extract_text
 from app.storage import job_store, match_store, resume_store
@@ -14,6 +16,10 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class UrlRequest(BaseModel):
+    url: str
 
 
 @router.post("", status_code=201)
@@ -77,6 +83,21 @@ async def create_job(
         match_error = str(exc)
 
     return {"job": job, "match_result": match_result, "match_error": match_error}
+
+
+@router.post("/from-url")
+async def create_job_from_url(payload: UrlRequest):
+    try:
+        page_text, title_hint = await fetch_page_text(payload.url)
+    except ScrapeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    try:
+        fields = extract_job_fields(page_text, title_hint)
+    except JdExtractionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return fields
 
 
 @router.get("")
