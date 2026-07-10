@@ -152,6 +152,29 @@ Open the frontend URL in your browser:
 2. Paste or upload a job description — or paste a job posting URL and click "Fetch job details" to auto-fill the title, company, and description — to get a match score, gap breakdown, and suggested resume bullets.
 3. Track the job's status on the Kanban board (Saved → Applied → Interviewing → Rejected/Offer) via drag-and-drop.
 
+## Running with Docker
+
+The whole stack (backend + frontend) can also run as two containers via Docker Compose — no local Python/Node setup needed, aside from Docker itself.
+
+Create `backend/.env` first (same as the manual setup above — needs `OPENAI_API_KEY`), then from the project root:
+
+```bash
+docker compose up --build
+```
+
+- Frontend: `http://localhost:80`
+- Backend: `http://localhost:8000` (health check: `curl http://localhost:8000/health`)
+
+**Backend image:** `python:3.11-slim-bookworm` + Playwright's Chromium (`playwright install --with-deps chromium`). Pinned to `bookworm` (Debian 12) rather than the floating `slim` tag, since Playwright's dependency installer maps OS-specific package names and doesn't recognize newer Debian releases (e.g. "trixie") — using a floating tag risked the image silently breaking on a future rebuild.
+
+**Frontend image:** a multi-stage build — a `node:20-alpine` stage runs `npm run build`, then only the compiled `dist/` output is copied into a final `nginx:alpine` stage (see `frontend/nginx.conf`), so the shipped image contains no Node.js or source code, just static files + nginx as a reverse proxy for `/api`.
+
+**Mock vs. real backend in the Docker build:** Vite bakes `VITE_USE_MOCK` in at build time, not container runtime, so `frontend/Dockerfile` takes it as a build arg (`ARG VITE_USE_MOCK=0`, defaulting to real-backend mode). To build a mock-mode frontend image instead (e.g. for a demo with no API key), override it:
+
+```bash
+docker compose build frontend --build-arg VITE_USE_MOCK=1
+```
+
 ## Testing
 
 The frontend has a Playwright E2E suite covering resume upload, JD submission, match result display, and Kanban board interactions. It runs against the frontend's built-in mock API, so it needs no backend or network access:
