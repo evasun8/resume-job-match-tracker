@@ -63,6 +63,95 @@ let jobs = [
 
 const publicJob = ({ _match, jd_text, ...j }) => ({ ...j, jd_text });
 
+// --- Auth mock ---
+// One seeded account (mirrors the seeded resume/jobs above), plus support
+// for signing up additional accounts in-memory (FE-15's E2E suite exercises
+// both). Real tokens aren't meaningful in mock mode, so these are opaque
+// placeholder strings rather than actual JWTs.
+const MOCK_USER = { id: 1, email: "demo@example.com" };
+const MOCK_PASSWORD = "demopass123";
+const MOCK_ACCESS_TOKEN = "mock-access-token";
+const signedUpEmails = new Set(); // additional accounts created via signup()
+let mockLoggedIn = false;
+let currentEmail = null; // whichever account is currently "logged in"
+let mockApiKey = null;
+
+export async function signup(email, password) {
+  await delay(300);
+  if (email === MOCK_USER.email || signedUpEmails.has(email)) {
+    throw { status: 409, detail: "Email already registered." };
+  }
+  signedUpEmails.add(email);
+  mockLoggedIn = true;
+  currentEmail = email;
+  return { access_token: MOCK_ACCESS_TOKEN, expires_in: 900 };
+}
+
+export async function login(email, password) {
+  await delay(300);
+  if (email !== MOCK_USER.email || password !== MOCK_PASSWORD) {
+    throw { status: 401, detail: "Invalid email or password." };
+  }
+  mockLoggedIn = true;
+  currentEmail = email;
+  return { access_token: MOCK_ACCESS_TOKEN, expires_in: 900 };
+}
+
+export async function logout() {
+  await delay(150);
+  mockLoggedIn = false;
+  currentEmail = null;
+  return { status: "ok" };
+}
+
+export async function refreshAccessToken() {
+  await delay(150);
+  if (!mockLoggedIn) throw { status: 401, detail: "Invalid or expired refresh token." };
+  return { access_token: MOCK_ACCESS_TOKEN, expires_in: 900 };
+}
+
+const maskKey = (key) => `${key.slice(0, 3)}...${key.slice(-4)}`;
+
+export async function getCurrentUser(accessToken) {
+  await delay(150);
+  if (!mockLoggedIn || accessToken !== MOCK_ACCESS_TOKEN) {
+    throw { status: 401, detail: "Not authenticated." };
+  }
+  return {
+    id: MOCK_USER.id,
+    email: currentEmail,
+    openai_api_key_masked: mockApiKey ? maskKey(mockApiKey) : null,
+  };
+}
+
+// FE-13: GET /api/auth/me via the in-app authorized path (same shape as
+// getCurrentUser, but callers don't pass a token explicitly).
+export async function getSettings() {
+  await delay(150);
+  if (!mockLoggedIn) throw { status: 401, detail: "Not authenticated." };
+  return {
+    id: MOCK_USER.id,
+    email: currentEmail,
+    openai_api_key_masked: mockApiKey ? maskKey(mockApiKey) : null,
+  };
+}
+
+// FE-13: PATCH /api/auth/me — mirrors BE-12's validation: 400 unless the
+// key is non-empty and starts with "sk-".
+export async function updateApiKey(key) {
+  await delay(300);
+  if (!mockLoggedIn) throw { status: 401, detail: "Not authenticated." };
+  const trimmed = (key || "").trim();
+  if (!trimmed || !trimmed.startsWith("sk-")) {
+    throw {
+      status: 400,
+      detail: 'That doesn\'t look like a valid OpenAI API key — keys start with "sk-".',
+    };
+  }
+  mockApiKey = trimmed;
+  return { openai_api_key_masked: maskKey(mockApiKey) };
+}
+
 export async function getResume() {
   await delay();
   if (!resume) throw { status: 404, detail: "No resume uploaded yet" };

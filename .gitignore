@@ -12,6 +12,10 @@ backend/**/*.pyc
 # Personal data (resume/job content) - keep out of version control
 backend/data/*.json
 backend/data/*.corrupt.*.json
+backend/data/*.db
+
+# Test artifacts
+backend/.pytest_cache/
 
 # Frontend
 frontend/node_modules/

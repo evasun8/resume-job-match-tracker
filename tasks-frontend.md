@@ -160,3 +160,67 @@ Every task below should be built against the documented request/response shapes 
 - **Interfaces/Contracts:** No new contract — consumes the same `400` error bodies, differentiated by message text.
 - **Out of Scope:** Client-side file parsing/preview — all extraction is server-side.
 - **Suggested Effort:** S (2 hrs)
+
+---
+
+## Phase D — Multi-tenant support (post-launch: auth UI + per-user settings)
+
+**Scope note:** FE-11 and FE-12 are security-adjacent (in-memory access-token state, silent refresh on load, auto-refresh-on-401 with concurrency-safe single-flight logic) and should be built hands-on rather than delegated, since a mistake here (e.g., persisting the access token where it shouldn't live, or a refresh race condition) is a real vulnerability or a real bug class, not just a visual bug. FE-13 and FE-14 are close to pure UI scaffolding (form layout, styling) and are good candidates to hand to a frontend-focused agent once FE-11/FE-12 establish the pattern to follow.
+
+### FE-11: Login / signup pages + in-memory access-token state — **build by hand**
+- **Decision (2026-07-11, revised):** Adopting the full hybrid pattern: the **access token lives only in memory** (React Context state — a plain JS variable, never `localStorage`, never a cookie), and is lost on tab close/full reload by design. The **refresh token is an httpOnly cookie** the frontend never touches directly — see `tasks-backend.md` BE-10's decision note for the full rationale. This supersedes the earlier single-cookie plan; flag both for the end-of-project retrospective as a "here's how the design evolved" story.
+- **Description:** Build `components/Auth/LoginForm.jsx` and `SignupForm.jsx` (email/password fields, calling `client.login(...)`/`client.signup(...)` against `tasks-backend.md` BE-10). Build a top-level `AuthContext` holding `{accessToken, currentUser, isAuthenticated}` purely in memory. On `login()`/`signup()` success, store the returned `access_token` into this context state (never persisted anywhere else). On **app load/reload** (where memory is empty since it was never persisted), attempt a **silent refresh**: call `POST /api/auth/refresh` (browser auto-sends the refresh cookie) — if it succeeds, populate a fresh access token into context and the user is transparently still logged in; if it 401s, the user is logged out and sees the login page. This silent-refresh-on-load call is the mechanism that makes "logged in across reloads" work despite the access token never being persisted.
+- **Acceptance Criteria:**
+  - Signing up then logging in transitions the app from a logged-out to logged-in state without a full page reload.
+  - **Refreshing the browser after login preserves the logged-in state** — verify this specifically exercises the silent-refresh-on-load path (add a temporary console log or breakpoint to confirm `/api/auth/refresh` actually fires on load, not just that the UI happens to look logged in).
+  - Logging out calls `POST /api/auth/logout` (clears the refresh cookie server-side) and clears the in-memory access token, returning the app to a logged-out state.
+  - Submitting wrong credentials shows the backend's generic "invalid credentials" message.
+  - DevTools confirms: the access token is nowhere in `localStorage`/`sessionStorage`/cookies (only in React state, invisible to any storage inspector); the refresh cookie is marked `HttpOnly`.
+- **Dependencies:** FE-01. Backend: `tasks-backend.md` BE-10, BE-11 (`/api/auth/refresh`, `/api/auth/me`).
+- **Interfaces/Contracts:** Adds `login(email, password)`, `signup(email, password)`, `logout()`, `refreshAccessToken()`, `getCurrentUser()` to `client.js`. `refreshAccessToken()` is the function FE-12's interceptor calls.
+- **Out of Scope:** "Remember me" / persistent-vs-session distinction, password reset UI.
+- **Suggested Effort:** M (4 hrs) — the silent-refresh-on-load flow is a new concept beyond FE-11's originally-scoped work.
+
+### FE-12: Attach access token to every API call + auto-refresh-on-401 interceptor — **build by hand**
+- **Description:** Update `client.js`'s shared low-level fetch wrapper to attach `Authorization: Bearer <accessToken>` (read from FE-11's in-memory context) to every request, and set `credentials: 'include'` (still needed so the refresh cookie flows to `/api/auth/refresh` specifically). Build a **401-response interceptor**: on any `401`, before giving up, call `refreshAccessToken()` once — if it succeeds, retry the original request with the new token; if the refresh itself 401s, log the user out and redirect to login. **Handle the concurrency edge case explicitly**: if multiple API calls are in-flight when the access token expires, they'll all hit 401 near-simultaneously — the interceptor must ensure only **one** refresh call happens (e.g., a shared in-flight promise other callers await instead of each independently calling `/api/auth/refresh`), not one refresh attempt per failed request.
+- **Acceptance Criteria:**
+  - Every existing API call (resume, jobs, URL-fetch, status update) continues to work end-to-end for a logged-in user with zero change to any calling component's code — only the shared low-level fetch wrapper changes.
+  - Visiting the app while logged out (and silent refresh also fails) shows the login page, not a broken/empty board.
+  - Manually forcing an access token to be expired/invalid, then making an API call, transparently triggers a refresh + retry — the calling component never sees a 401, the request just succeeds after a brief delay.
+  - **Concurrency test:** trigger several API calls simultaneously with an expired access token (e.g., load a view that fires 3+ requests at once) and confirm via Network tab that `/api/auth/refresh` is called exactly once, not 3+ times.
+  - If the refresh token itself is expired (7+ days idle), the interceptor logs out and redirects cleanly rather than looping or hanging.
+- **Dependencies:** FE-11. Backend: `tasks-backend.md` BE-11 (`Authorization` header validation, `/api/auth/refresh`, CORS credentials config).
+- **Interfaces/Contracts:** Modifies `client.js`'s shared fetch internals — no signature changes for calling components.
+- **Out of Scope:** Per-route granular permissions (not applicable). Refresh token rotation (noted in BE-10 as a future hardening step).
+- **Suggested Effort:** M (4-5 hrs) — the concurrency-safe single-flight refresh logic is the trickiest piece of this entire phase; budget real debugging time here, this is where subtle race-condition bugs live in real production auth code too.
+
+### FE-13: Settings page — OpenAI API key entry — *candidate for frontend agent*
+- **Description:** Build `components/Settings/SettingsPage.jsx` — a form for entering/updating the user's personal OpenAI API key, calling `tasks-backend.md` BE-12's `PATCH /api/auth/me`, displaying the masked confirmation from `GET /api/auth/me` if a key is already set. Should clearly explain *why* the key is needed (usage is billed to the user's own OpenAI account) so it doesn't feel like an arbitrary form field.
+- **Acceptance Criteria:**
+  - Saving a key shows a masked confirmation (e.g., "Key ending in ...abcd saved"), never echoes the full key back into the DOM/state after submission.
+  - Attempting to submit a job for analysis with no key set surfaces BE-12's actionable error message, with a link/button to the Settings page.
+- **Dependencies:** FE-11, FE-12. Backend: `tasks-backend.md` BE-12.
+- **Interfaces/Contracts:** Adds `getSettings()`, `updateApiKey(key)` to `client.js`.
+- **Out of Scope:** Any other user preferences beyond the API key (nothing else is scoped for a settings page yet).
+- **Suggested Effort:** S (2 hrs)
+
+### FE-14: Signup/login form styling + empty/loading states — *candidate for frontend agent*
+- **Description:** Visual polish pass on FE-11's forms and FE-13's settings page — consistent styling with the rest of the app (shadcn/ui-style components, matching existing `Alert`/loading-spinner patterns from FE-09), responsive layout, accessible form labels/error states.
+- **Acceptance Criteria:**
+  - Auth and settings pages visually match the rest of the app's existing component library and spacing conventions.
+  - All forms have visible loading states during submission and accessible error messaging (matches the pattern audited in FE-09).
+- **Dependencies:** FE-11, FE-13.
+- **Interfaces/Contracts:** No new contract — pure presentation layer on top of FE-11/FE-13's logic.
+- **Out of Scope:** Any behavior/logic changes — this task is strictly visual.
+- **Suggested Effort:** S (2 hrs)
+
+### FE-15: E2E auth flow tests + update existing specs for auth — **build by hand**
+- **Description:** Extend the Playwright suite (`frontend/e2e/`) with `auth.spec.js`: signup → login → land on the authenticated app view; wrong password shows the error state; logging out returns to the login page; visiting the app while logged out redirects to login instead of showing a broken board. Then update every existing spec (`resume-upload.spec.js`, `jd-submission.spec.js`, `match-result-display.spec.js`, `kanban-board.spec.js`) to log in as a seeded mock user first (via a shared `helpers.js` addition, e.g. `loginAsMockUser(page)`), since every one of them now depends on an authenticated session once FE-12 lands. Update `frontend/src/api/mock.js` to simulate the new auth endpoints (`login`/`signup`/token validation) consistently with the existing mock conventions (magic-substring failures, seeded fixture data).
+- **Acceptance Criteria:**
+  - `npm test` passes fully with zero backend/network dependency, same as today — the mock API layer covers auth the same way it covers everything else.
+  - Every pre-existing spec still passes after being updated to authenticate first — confirms FE-12's auth-attachment change didn't silently break any prior flow.
+  - The new `auth.spec.js` covers both the happy path and at least one failure path (wrong credentials, logged-out redirect).
+- **Dependencies:** FE-11, FE-12. All four existing spec files.
+- **Interfaces/Contracts:** No new contract — verification only, plus the `mock.js` additions FE-11/FE-12 already depend on for local dev.
+- **Out of Scope:** Testing the real (non-mock) backend end-to-end — covered instead by `tasks-backend.md` BE-13's integration tests.
+- **Suggested Effort:** M (3 hrs)

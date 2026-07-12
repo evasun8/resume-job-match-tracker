@@ -180,3 +180,58 @@ All responses are JSON. Base URL assumed `http://localhost:8000`.
 - **Interfaces/Contracts:** Tightens (does not change) existing response shapes.
 - **Out of Scope:** Rate limiting / auth (not applicable — no multi-user, no hosting).
 - **Suggested Effort:** S (2-3 hrs)
+
+---
+
+## Phase D — Multi-tenant support (post-launch: auth + per-user scoping)
+
+**Scope note:** Every endpoint from Phase A/B/C above (`/api/resume`, `/api/jobs`, `/api/jobs/{id}`) must be retrofitted to (a) require a valid JWT and (b) pass the authenticated `user_id` into every `tasks-database.md` store call (per DB-06's new signatures). This phase is intentionally hand-built rather than delegated wholesale to a subagent — auth is the part of this app most likely to have a real security consequence if gotten wrong.
+
+### BE-10: Auth endpoints — signup, login, dual-token issuance (access + refresh)
+- **Decision (2026-07-11, revised):** Adopting the full production-grade hybrid pattern instead of a single long-lived cookie: a **short-lived access token (15 min)** returned in the JSON response body — the frontend keeps it in memory only (React state/context), never `localStorage` — plus a **long-lived refresh token (7 days)** set as an **httpOnly, SameSite=Lax cookie**, used only to mint new access tokens via a silent-refresh endpoint. Rationale: an access token stolen via XSS is now dead within 15 minutes (small blast radius) instead of 24 hours; the refresh token itself is never exposed to JS at all. This is more code than a single cookie (see BE-11's refresh endpoint and `tasks-frontend.md` FE-12's refresh interceptor) but matches real-world production practice, which was the explicit goal. Flag for end-of-project retrospective alongside the original single-cookie discussion this superseded.
+- **Description:** New `backend/app/routers/auth.py`: `POST /api/auth/signup` (`{email, password}` → creates a user row via a new `user_store.py` in the database list, hashes the password with `bcrypt`/`passlib` — **never store or log a plaintext password**). `POST /api/auth/login` (`{email, password}` → verifies hash, returns `{access_token, expires_in: 900}` in the JSON body **and** sets `Set-Cookie: refresh_token=<jwt>; HttpOnly; SameSite=Lax; Secure (prod only); Path=/api/auth`). Two separate JWTs, both signed with `JWT_SECRET`: access token payload `{sub: user_id, type: "access", exp: <15 min>}`, refresh token payload `{sub: user_id, type: "refresh", exp: <7 days>}` — the `type` claim matters, since BE-11's endpoints must reject a refresh token presented as an access token and vice versa. `POST /api/auth/logout` clears the refresh cookie. Add `JWT_SECRET` to `config.py`'s env-var loading (same never-log-the-secret discipline as `OPENAI_API_KEY`).
+- **Acceptance Criteria:**
+  - Signing up with an email already in use returns a clear `409`, not a generic `500`.
+  - Logging in with a wrong password returns `401` with a generic "invalid credentials" message (must not reveal whether the email exists).
+  - Login response body contains `access_token` (JWT, `type: "access"`, ~15 min expiry); `Set-Cookie` header carries the refresh token with `HttpOnly`/`SameSite=Lax` and is scoped to `Path=/api/auth` (narrower than the whole site, since only the refresh endpoint needs it).
+  - The refresh token is never present in any JSON response body; the access token is never set as a cookie.
+  - Password hashes in the database are never plain/reversible (verify via direct DB inspection in a test).
+- **Dependencies:** DB-06 (`users` table + a new `user_store.py` exposing `create_user(email, password_hash)`, `get_user_by_email(email)`).
+- **Interfaces/Contracts:** Defines `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout` — this is what `tasks-frontend.md` FE-11 codes against.
+- **Out of Scope:** Password reset / email verification flows (not required for a personal-scale app; flag as a future consideration). Refresh token rotation/reuse-detection (a further hardening step some production systems add — noted as a possible future enhancement, not built now).
+- **Suggested Effort:** M (4-5 hrs) — slightly larger than a single-token design due to two JWT types and the `type` claim discipline.
+
+### BE-11: Auth dependency (access-token verification) + silent-refresh endpoint + retrofit ownership checks
+- **Description:** Build a FastAPI dependency (e.g., `get_current_user_id`) that reads the access token from the `Authorization: Bearer <token>` header (not a cookie — the access token lives in frontend memory and is attached manually, unlike the refresh token), verifies signature + expiry + `type == "access"`, and returns the `user_id` from `sub` — raising `401` on any missing/invalid/expired/wrong-type token. Add this dependency to **every** existing route in `resume.py` and `jobs.py`, threading `user_id` into DB-06's scoped store calls. New `POST /api/auth/refresh`: reads the refresh cookie, verifies signature + expiry + `type == "refresh"`, and if valid, issues a **new** access token in the response body (same shape as login) — this is what `tasks-frontend.md` FE-12's silent-refresh flow calls. Add `GET /api/auth/me` (requires a valid access token; returns current user's basic info) for FE-11's app-load check. **Update CORS config from BE-01**: `allow_credentials=True`, `allow_origins` listing the frontend's exact dev origin (required for the refresh cookie to flow cross-port in local dev).
+- **Acceptance Criteria:**
+  - Calling any protected endpoint with no/expired/tampered/wrong-type access token returns `401` uniformly.
+  - `POST /api/auth/refresh` with a valid refresh cookie returns a fresh access token; with an expired/missing/tampered refresh cookie, returns `401` (forcing a full re-login).
+  - A refresh token cannot be used directly as an access token on a protected endpoint, and vice versa (the `type` claim check is actually enforced, not just documented).
+  - Two logged-in users each see only their own data end-to-end through the live API.
+  - A cross-origin refresh request from the frontend dev server successfully includes the cookie once CORS is configured correctly (verify via browser Network tab, not curl).
+- **Dependencies:** BE-10, DB-06.
+- **Interfaces/Contracts:** Every existing endpoint now requires `Authorization: Bearer <access_token>` (attached by `tasks-frontend.md` FE-12's request wrapper, refreshed automatically on 401 via the new `/api/auth/refresh`). Adds `GET /api/auth/me`, `POST /api/auth/refresh`.
+- **Out of Scope:** Refresh token rotation (issuing a new refresh token on every use) — noted in BE-10 as a further-hardening future step.
+- **Suggested Effort:** M (4-5 hrs) — the refresh endpoint and `type`-claim checks are new surface area beyond a single-token design; each retrofitted endpoint is still a place a mistake could leak another user's data, so budget careful review time.
+
+### BE-12: Per-user OpenAI API key storage + settings endpoint
+- **Description:** New `PATCH /api/auth/me` (or `PUT /api/settings`) accepting `{openai_api_key}`, encrypting it before storing in the `users.openai_api_key_encrypted` column (e.g., via `cryptography`'s `Fernet` with a key from a new `ENCRYPTION_KEY` env var — distinct from `JWT_SECRET`), and a `GET` that returns only a masked confirmation (e.g., `"sk-...abcd"`), never the full key. Update `llm_match.analyze(...)` and `jd_url_extract.extract_job_fields(...)` (both currently reading the single global `OPENAI_API_KEY`) to accept and use the calling user's decrypted key instead, falling back to a clear `400`/`402`-style error ("Add your OpenAI API key in Settings") if the user hasn't set one — no silent fallback to a shared/default key.
+- **Acceptance Criteria:**
+  - A user's key is never returned in full via any API response, log line, or error message after initial submission.
+  - Submitting a job for analysis without having set a personal key returns a clear, actionable error rather than failing with an unrelated OpenAI auth error or silently using someone else's key.
+  - Two users with different keys each get billed (via OpenAI's own usage dashboard) only for their own analyses — verify by checking the `Authorization` header sent to OpenAI's API differs per user in a test/mock.
+- **Dependencies:** BE-10, BE-11, DB-06.
+- **Interfaces/Contracts:** New `PATCH /api/auth/me` / `GET /api/auth/me` — consumed by `tasks-frontend.md` FE-13 (settings page). Changes `llm_match.analyze`'s signature to accept an `api_key` parameter instead of reading the module-level config constant.
+- **Out of Scope:** Any billing/usage-metering UI on our side (OpenAI's own dashboard is the source of truth for each user's spend).
+- **Suggested Effort:** M (3 hrs)
+
+### BE-13: Unit + integration tests for auth and multi-tenant scoping
+- **Description:** Add `backend/tests/` (pytest) covering: (a) **unit-level** — `user_store.create_user`/`get_user_by_email` against a temp SQLite DB, password hashing round-trip (hash → verify succeeds, verify fails on wrong password), JWT encode/decode (valid token decodes to correct `user_id`, expired token raises, tampered signature raises); (b) **integration-level**, using FastAPI's `TestClient` against a real (temporary, per-test-run) SQLite DB — signup → login → use returned token to call a protected endpoint succeeds; missing/expired/tampered token on any protected endpoint returns `401`; and the critical multi-tenant test: **two users, two tokens, each creates a resume/job — assert User A's token can never read, list, or mutate User B's data, for every endpoint** (this single test class is the most important test in this entire phase).
+- **Acceptance Criteria:**
+  - Test suite runs via a single command (e.g., `pytest backend/tests/`) with no manual setup beyond `pip install -r requirements.txt`, using an isolated test database (never touches real `backend/data/`).
+  - The cross-user isolation test explicitly asserts `403`/`404` (not `200` with someone else's data) for every existing endpoint from Phase A/B, not just a couple of examples.
+  - Running the suite twice in a row produces identical results (no state leakage between test runs — temp DB is created fresh per run or per test).
+- **Dependencies:** BE-10, BE-11, BE-12, DB-06.
+- **Interfaces/Contracts:** No new API surface — pure verification of BE-10/BE-11/BE-12's existing contracts.
+- **Out of Scope:** Load/performance testing, fuzzing. Frontend E2E tests are `tasks-frontend.md` FE-15.
+- **Suggested Effort:** M (3-4 hrs) — worth the investment given how costly a missed cross-user leak would be.

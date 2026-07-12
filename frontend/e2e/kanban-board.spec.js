@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { loginAsMockUser } from "./helpers.js";
 
 test.describe("kanban board", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await loginAsMockUser(page);
     await page.getByRole("tab", { name: "Board" }).click();
   });
 

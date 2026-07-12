@@ -8,9 +8,10 @@ from fastapi.responses import JSONResponse
 # Importing app.config eagerly forces a clear startup error if OPENAI_API_KEY
 # is unset, rather than a silent failure on first LLM call.
 from app import config  # noqa: F401
-from app.routers import jobs, resume
+from app.routers import auth, jobs, resume
 from app.services.llm_match import MatchAnalysisError
 from app.storage.bootstrap import ensure_data_files
+from app.storage.db import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(resume.router)
 app.include_router(jobs.router)
 
@@ -31,6 +33,7 @@ app.include_router(jobs.router)
 @app.on_event("startup")
 async def on_startup():
     ensure_data_files()
+    init_db()
 
 
 @app.exception_handler(MatchAnalysisError)

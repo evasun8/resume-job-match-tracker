@@ -11,7 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ValidationError
 
-from app.config import LLM_MODEL, OPENAI_API_KEY
+from app.config import LLM_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,10 @@ def _build_user_prompt(page_text: str, title_hint: str) -> str:
     )
 
 
-def _get_client():
+def _get_client(api_key: str):
     from openai import OpenAI
 
-    return OpenAI(api_key=OPENAI_API_KEY)
+    return OpenAI(api_key=api_key)
 
 
 def _call_llm(client, page_text: str, title_hint: str, corrective: Optional[str] = None) -> str:
@@ -98,14 +98,16 @@ def _parse_and_validate(raw_content: str) -> _UrlExtraction:
         raise ValueError(f"Response did not match expected schema: {exc}") from exc
 
 
-def extract_job_fields(page_text: str, title_hint: str) -> dict:
+def extract_job_fields(page_text: str, title_hint: str, api_key: str) -> dict:
     """Extract {title, company, jd_text} from scraped job posting page text.
+
+    api_key is the calling user's own OpenAI API key (BE-12).
 
     Raises JdExtractionError if the LLM call fails, the response is
     malformed after one retry, or no job description could be found on the
     page (empty jd_text).
     """
-    client = _get_client()
+    client = _get_client(api_key)
 
     raw_content = _call_llm(client, page_text, title_hint)
     try:

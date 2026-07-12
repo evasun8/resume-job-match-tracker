@@ -4,14 +4,34 @@ import JobDescriptionForm from "@/components/JobDescriptionForm/JobDescriptionFo
 import MatchResultView from "@/components/MatchResultView/MatchResultView";
 import SuggestedBullets from "@/components/SuggestedBullets/SuggestedBullets";
 import KanbanBoard from "@/components/KanbanBoard/KanbanBoard";
+import AuthPage from "@/components/Auth/AuthPage";
+import SettingsPage from "@/components/Settings/SettingsPage";
+import { useAuth } from "@/auth/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 export default function App() {
-  const [view, setView] = useState("analyze"); // "analyze" | "board"
+  const { isLoading, isAuthenticated, currentUser, logout } = useAuth();
+  const [view, setView] = useState("analyze"); // "analyze" | "board" | "settings"
   // Latest POST /api/jobs response: { job, match_result, match_error }
   const [analysis, setAnalysis] = useState(null);
+
+  // While the silent-refresh-on-load check (AuthContext) is in flight, we
+  // genuinely don't know yet whether the user is logged in -- show a
+  // neutral loading state rather than flashing the login page first.
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Spinner label="Loading..." />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
 
   return (
     <div className="min-h-screen">
@@ -22,6 +42,15 @@ export default function App() {
             <p className="text-sm text-muted-foreground">
               Analyze job descriptions against your resume, then track applications.
             </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground">{currentUser?.email}</span>
+            <Button variant="outline" size="sm" onClick={() => setView("settings")}>
+              Settings
+            </Button>
+            <Button variant="outline" size="sm" onClick={logout}>
+              Log out
+            </Button>
           </div>
         </div>
       </header>
@@ -62,9 +91,18 @@ export default function App() {
                         {analysis.match_error ||
                           "The match analysis could not be completed. Your job was still saved to the board."}
                       </p>
-                      <Button variant="outline" size="sm" onClick={() => setView("board")}>
-                        View it on the board
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {/* BE-12's "no API key configured" failure is actionable —
+                            route the user straight to the fix. */}
+                        {analysis.match_error?.includes("OpenAI API key") && (
+                          <Button variant="outline" size="sm" onClick={() => setView("settings")}>
+                            Go to Settings
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => setView("board")}>
+                          View it on the board
+                        </Button>
+                      </div>
                     </AlertDescription>
                   </Alert>
                 )}
@@ -74,6 +112,12 @@ export default function App() {
 
           <TabsContent value="board">
             <KanbanBoard />
+          </TabsContent>
+
+          {/* No TabsTrigger for this — reached via the header's Settings
+              button; the minimal Tabs impl renders any matching content. */}
+          <TabsContent value="settings">
+            <SettingsPage />
           </TabsContent>
         </Tabs>
       </main>

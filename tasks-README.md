@@ -48,6 +48,25 @@ The file-ownership split (storage modules vs. routes vs. UI) is the seam that ke
 
 **Tasks that can start immediately, in parallel, right now (no dependencies at all):** DB-01, BE-01, FE-01. Once those three land (each is small, 1-3 hrs), nearly all of Phase A opens up in parallel across all three lists.
 
+**Phase D — post-launch, multi-tenant support (SQLite + dual-token auth + per-user OpenAI keys):**
+
+Auth design (2026-07-11): access token (15 min) in frontend memory only + refresh token (7 days) in an httpOnly cookie, with a silent-refresh-on-load flow and a concurrency-safe auto-refresh-on-401 interceptor — the full production-grade pattern, chosen deliberately over a simpler single-cookie design for learning purposes. See decision notes in `tasks-backend.md` BE-10 and `tasks-frontend.md` FE-11/FE-12 for the full rationale and the tradeoffs accepted.
+
+| Task | List | Depends on | Build approach |
+|---|---|---|---|
+| DB-06 SQLite schema + users table + migration | database | None (rewrites DB-01..DB-04) | Hand-built |
+| BE-10 Auth endpoints (signup/login, dual-token issuance) | backend | DB-06 | Hand-built |
+| BE-11 Access-token dependency + `/api/auth/refresh` + retrofit ownership checks | backend | BE-10, DB-06 | Hand-built |
+| BE-12 Per-user OpenAI API key storage | backend | BE-10, BE-11, DB-06 | Hand-built |
+| FE-11 Login/signup pages + in-memory access token + silent refresh on load | frontend | FE-01 (→ BE-10, BE-11) | **Hand-built** — security-critical |
+| FE-12 Attach access token to API calls + concurrency-safe refresh-on-401 interceptor | frontend | FE-11 (→ BE-11) | **Hand-built** — race-condition-prone, mistakes leak data across users |
+| FE-13 Settings page (OpenAI API key entry) | frontend | FE-11, FE-12 (→ BE-12) | Frontend agent candidate |
+| FE-14 Auth/settings UI styling polish | frontend | FE-11, FE-13 | Frontend agent candidate |
+| BE-13 Unit + integration tests (auth, cross-user isolation) | backend | BE-10, BE-11, BE-12, DB-06 | Hand-built |
+| FE-15 E2E auth tests + update existing specs | frontend | FE-11, FE-12 | Hand-built |
+
+Sequencing note: DB-06 is a rewrite, not an addition — it changes every store function's signature (adds `user_id` as the first argument), so BE-10/BE-11 cannot start meaningfully until it lands. Within the frontend list, FE-11/FE-12 establish the auth pattern (where the token lives, how it's attached) that FE-13/FE-14 then just consume — build those two by hand first even if delegating FE-13/FE-14 afterward. BE-13 and FE-15 close the loop last, once everything else in the phase is in place — but should not be skipped or left for "later," since the cross-user isolation test in BE-13 is the single highest-value test in the whole project.
+
 ## Cross-list interface summary
 
 - Storage interfaces (database → backend): `ensure_data_files()`; `get_resume()`/`save_resume(...)`; `list_jobs()`/`get_job(id)`/`create_job(...)`/`update_job_status(id, status)`; `get_match_result(id)`/`save_match_result(id, data)`/`get_match_summaries()`. Full schemas in `tasks-database.md`.

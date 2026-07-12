@@ -133,3 +133,21 @@ If the file is missing/empty, no resume has been uploaded yet — this is a vali
 - **Interfaces/Contracts:** No new public interface; behavior-only hardening of existing functions.
 - **Out of Scope:** Actual migration logic between schema versions (not needed until a v2 schema exists).
 - **Suggested Effort:** S (2-3 hrs)
+
+---
+
+## Phase D — Multi-tenant support (post-launch: SQLite migration + per-user scoping)
+
+**Scope note:** This phase replaces the flat-JSON storage layer entirely with SQLite, and adds a `users` table that every other table now references. This is the single biggest structural change to this workstream since Phase A — every function signature in `resume_store.py`/`job_store.py`/`match_store.py` gains a `user_id` parameter, and every query gains a `WHERE user_id = ?` clause. Sequential integer/UUID ids alone are no longer sufficient for ownership — a caller must never be able to fetch another user's row by guessing/incrementing an id.
+
+### DB-06: SQLite schema + `users` table + migration of existing stores
+- **Description:** Introduce SQLite (via `sqlite3` stdlib or SQLAlchemy — implementer's choice, but must support parameterized queries to prevent SQL injection) with four tables: `users` (`id`, `email` UNIQUE, `password_hash`, `openai_api_key_encrypted` nullable, `created_at`), `resumes`, `jobs`, `match_results` — the latter three carry the same fields as their current JSON-file counterparts, plus a `user_id` foreign key. Rewrite `resume_store.py`/`job_store.py`/`match_store.py`'s public functions to take `user_id` as their first argument and scope every query accordingly (e.g., `get_resume(user_id)`, `list_jobs(user_id)`, `get_job(user_id, job_id)` — fetching a job that exists but belongs to a different `user_id` must behave identically to "not found," never leak existence).
+- **Acceptance Criteria:**
+  - Two different `user_id`s each creating a resume/job/match result never see each other's data through any store function.
+  - Requesting a job by an id that exists but belongs to another user returns the same "not found" result as a genuinely nonexistent id (no distinguishable error/timing that would let a caller enumerate other users' valid ids).
+  - All queries are parameterized — no string-formatted SQL anywhere (grep-able confirmation).
+  - A one-time migration script moves any existing single-user JSON data (`backend/data/*.json`) into the new SQLite tables under a designated "legacy" user account, so local dev data isn't silently lost.
+- **Dependencies:** None structurally, but effectively replaces DB-01 through DB-04 — implementer should treat this as a rewrite, not an addition.
+- **Interfaces/Contracts:** New function signatures (`user_id` first arg on every store function) — this is a **breaking change** to the contract `tasks-backend.md` currently codes against; BE-10/BE-11 must update every call site.
+- **Out of Scope:** Any ORM abstraction beyond what's needed for parameterized queries + the four tables above. No support for multiple resumes per user (still one master resume, now scoped per `user_id` instead of globally).
+- **Suggested Effort:** L (5-7 hrs) — highest-risk task in this phase; every existing call site elsewhere in the app is touched indirectly.

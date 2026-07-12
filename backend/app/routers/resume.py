@@ -1,9 +1,13 @@
-"""Resume endpoints: POST /api/resume, GET /api/resume (BE-02, extended by BE-08)."""
+"""Resume endpoints: POST /api/resume, GET /api/resume (BE-02, extended by
+BE-08). Retrofitted for multi-tenant auth in BE-11 -- requires a valid
+access token and scopes storage calls by the authenticated user_id.
+"""
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.config import MAX_UPLOAD_SIZE_BYTES
+from app.dependencies import get_current_user_id
 from app.services.text_extraction import TextExtractionError, extract_text
 from app.storage import resume_store
 
@@ -14,6 +18,7 @@ router = APIRouter(prefix="/api/resume", tags=["resume"])
 async def upload_resume(
     file: Optional[UploadFile] = File(default=None),
     text: Optional[str] = Form(default=None),
+    user_id: int = Depends(get_current_user_id),
 ):
     has_file = file is not None and file.filename
     has_text = text is not None and text.strip() != ""
@@ -34,7 +39,7 @@ async def upload_resume(
         if not raw_text:
             raise HTTPException(status_code=400, detail="Pasted text cannot be empty.")
         resume = resume_store.save_resume(
-            raw_text=raw_text, original_filename=None, source_type="paste"
+            user_id=user_id, raw_text=raw_text, original_filename=None, source_type="paste"
         )
         return resume
 
@@ -51,14 +56,14 @@ async def upload_resume(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     resume = resume_store.save_resume(
-        raw_text=raw_text, original_filename=file.filename, source_type="upload"
+        user_id=user_id, raw_text=raw_text, original_filename=file.filename, source_type="upload"
     )
     return resume
 
 
 @router.get("")
-async def get_resume():
-    resume = resume_store.get_resume()
+async def get_resume(user_id: int = Depends(get_current_user_id)):
+    resume = resume_store.get_resume(user_id)
     if resume is None:
         raise HTTPException(status_code=404, detail="No resume uploaded yet")
     return resume

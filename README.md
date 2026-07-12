@@ -1,8 +1,8 @@
 # Resume ↔ Job Match Tracker
 
-A personal, local-only tool that tracks job applications on a Kanban board and uses an LLM to score how well your resume matches a given job description — with a breakdown of matched/missing requirements and rewritten resume bullet suggestions.
+A tool that tracks job applications on a Kanban board and uses an LLM to score how well your resume matches a given job description — with a breakdown of matched/missing requirements and rewritten resume bullet suggestions.
 
-Single-user, no auth, no hosting — runs entirely on your own machine. See [PRD.md](PRD.md) for full product scope, or [PROJECT_STORY.md](PROJECT_STORY.md) for a portfolio-style writeup of the key decisions, trade-offs, and roadmap.
+Multi-tenant with JWT-based authentication (each user's data is fully isolated, and each user brings their own OpenAI API key). See [PRD.md](PRD.md) for full product scope, or [PROJECT_STORY.md](PROJECT_STORY.md) for a portfolio-style writeup of the key decisions, trade-offs, and roadmap. *(Note: the rest of this README's setup instructions predate multi-tenant auth and Docker deployment — a fuller pass is a good next step; the current, accurate quick-start is `docker compose up --build` per the "Running with Docker" section below, plus signing up an account once the app loads.)*
 
 ## Architecture
 
