@@ -12,10 +12,26 @@ import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field, ValidationError
+from langsmith import traceable
 
 from app.config import LLM_MODEL
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_trace_inputs(inputs: dict) -> dict:
+    """Strip the API key entirely and redact resume/JD text before this
+    function's inputs are sent to LangSmith -- a trace's job is to show
+    timing/success/cost, not leak a credential or someone's resume content
+    to a third-party service.
+    """
+    redacted = dict(inputs)
+    redacted.pop("api_key", None)
+    if "resume_text" in redacted:
+        redacted["resume_text"] = f"[REDACTED, {len(redacted['resume_text'])} chars]"
+    if "jd_text" in redacted:
+        redacted["jd_text"] = f"[REDACTED, {len(redacted['jd_text'])} chars]"
+    return redacted
 
 CATEGORY_NAMES = [
     "hard_skills",
@@ -157,7 +173,7 @@ def _parse_and_validate(raw_content: str) -> dict:
 
     return validated.model_dump()
 
-
+@traceable(name="llm_match.analyze", process_inputs=_redact_trace_inputs)
 def analyze(resume_text: str, jd_text: str, api_key: str) -> dict:
     """Run resume-vs-JD match analysis via OpenAI gpt-4o-mini.
 

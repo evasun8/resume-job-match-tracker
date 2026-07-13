@@ -10,10 +10,23 @@ import logging
 from typing import Optional
 
 from pydantic import BaseModel, ValidationError
+from langsmith import traceable
 
 from app.config import LLM_MODEL
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_trace_inputs(inputs: dict) -> dict:
+    """Strip the API key and redact scraped page text before this
+    function's inputs are sent to LangSmith -- same rationale as
+    llm_match._redact_trace_inputs.
+    """
+    redacted = dict(inputs)
+    redacted.pop("api_key", None)
+    if "page_text" in redacted:
+        redacted["page_text"] = f"[REDACTED, {len(redacted['page_text'])} chars]"
+    return redacted
 
 
 class JdExtractionError(Exception):
@@ -97,7 +110,7 @@ def _parse_and_validate(raw_content: str) -> _UrlExtraction:
     except ValidationError as exc:
         raise ValueError(f"Response did not match expected schema: {exc}") from exc
 
-
+@traceable(name="jd_url_extract.extract_job_fields", process_inputs=_redact_trace_inputs)
 def extract_job_fields(page_text: str, title_hint: str, api_key: str) -> dict:
     """Extract {title, company, jd_text} from scraped job posting page text.
 

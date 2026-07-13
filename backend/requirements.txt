@@ -17,6 +17,7 @@ cryptography==49.0.0
 # ^ was already installed transitively (via pdfplumber -> pdfminer.six); now
 # pinned as a direct dependency since BE-12 uses its Fernet symmetric
 # encryption directly to encrypt/decrypt each user's stored OpenAI API key.
+langsmith==0.1.147
 
 # --- Test-only (BE-13) ---
 pytest==8.3.3
