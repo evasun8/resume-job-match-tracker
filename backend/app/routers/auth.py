@@ -9,6 +9,7 @@ browser sends it automatically on requests to that path.
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 
+from app.config import IS_PRODUCTION
 from app.dependencies import get_current_user_id
 from app.services.auth_tokens import (
     InvalidTokenError,
@@ -45,7 +46,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         value=refresh_token,
         httponly=True,
         samesite="lax",
-        secure=False,  # TODO: True once served over HTTPS (see production polish milestone)
+        secure=IS_PRODUCTION,  # Secure cookies only ever send over HTTPS -- True on EC2 (behind real TLS), False in local dev
         path=REFRESH_COOKIE_PATH,
         max_age=REFRESH_COOKIE_MAX_AGE_SECONDS,
     )

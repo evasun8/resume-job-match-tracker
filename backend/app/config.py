@@ -47,3 +47,11 @@ MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024
 
 # LLM model used for match analysis.
 LLM_MODEL = "gpt-4o-mini"
+
+# "development" (default, e.g. local `npm run dev` / bare `uvicorn --reload`)
+# or "production" (EC2, behind real HTTPS via nginx + Certbot). Controls
+# whether the refresh cookie is marked Secure -- Secure cookies are only
+# ever sent over HTTPS, which would silently break local dev testing over
+# plain http://localhost if this were hardcoded to True everywhere.
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+IS_PRODUCTION = ENVIRONMENT == "production"
